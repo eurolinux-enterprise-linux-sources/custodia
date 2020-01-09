@@ -1,30 +1,10 @@
 # Copyright (C) 2015  Custodia Project Contributors - see LICENSE file
+import warnings
 
-from custodia import log
+from custodia.plugin import CSStore, CSStoreError, CSStoreExists
 
-
-class CSStoreError(Exception):
-    def __init__(self, message=None):
-        log.debug(message)
-        super(CSStoreError, self).__init__(message)
+__all__ = ('CSStore', 'CSStoreError', 'CSStoreExists')
 
 
-class CSStoreExists(Exception):
-    def __init__(self, message=None):
-        log.debug(message)
-        super(CSStoreExists, self).__init__(message)
-
-
-class CSStore(object):
-
-    def get(self, key):
-        raise NotImplementedError
-
-    def set(self, key, value, replace=False):
-        raise NotImplementedError
-
-    def list(self, keyfilter=None):
-        raise NotImplementedError
-
-    def cut(self, key):
-        raise NotImplementedError
+warnings.warn('custodia.store.interface is deprecated, import from '
+              'custodia.plugin instead.', DeprecationWarning,)

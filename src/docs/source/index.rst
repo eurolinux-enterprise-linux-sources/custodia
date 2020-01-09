@@ -20,7 +20,12 @@ Contents:
 .. toctree::
    :maxdepth: 2
 
-
+   readme.rst
+   config.rst
+   api.rst
+   examples/index.rst
+   plugins/index.rst
+   container.rst
 
 Indices and tables
 ==================

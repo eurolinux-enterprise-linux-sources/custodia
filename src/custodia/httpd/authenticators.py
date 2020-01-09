@@ -1,63 +1,133 @@
 # Copyright (C) 2015  Custodia Project Contributors - see LICENSE file
 
-from custodia.httpd.server import HTTPError
+import os
 
+from cryptography.hazmat.primitives import constant_time
 
-class HTTPAuthenticator(object):
-
-    def __init__(self, config=None):
-        self.config = config
-
-    def handle(self, request):
-        raise HTTPError(403)
+from custodia import log
+from custodia.plugin import HTTPAuthenticator, PluginOption
 
 
 class SimpleCredsAuth(HTTPAuthenticator):
-
-    def __init__(self, config=None):
-        super(SimpleCredsAuth, self).__init__(config)
-        self._uid = 0
-        self._gid = 0
-        if 'uid' in self.config:
-            self._uid = int(self.config['uid'])
-        if 'gid' in self.config:
-            self._gid = int(self.config['gid'])
+    uid = PluginOption('pwd_uid', -1, "User id or name, -1 ignores user")
+    gid = PluginOption('grp_gid', -1, "Group id or name, -1 ignores group")
 
     def handle(self, request):
-        uid = int(request['creds']['gid'])
-        gid = int(request['creds']['uid'])
-        if self._gid == gid or self._uid == uid:
+        creds = request.get('creds')
+        if creds is None:
+            self.logger.debug('SCA: Missing "creds" from request')
+            return False
+        uid = int(creds['uid'])
+        gid = int(creds['gid'])
+        uid_match = self.uid != -1 and self.uid == uid
+        gid_match = self.gid != -1 and self.gid == gid
+        if uid_match or gid_match:
+            self.audit_svc_access(log.AUDIT_SVC_AUTH_PASS,
+                                  request['client_id'],
+                                  "%d, %d" % (uid, gid))
             return True
         else:
+            self.audit_svc_access(log.AUDIT_SVC_AUTH_FAIL,
+                                  request['client_id'],
+                                  "%d, %d" % (uid, gid))
             return False
 
 
 class SimpleHeaderAuth(HTTPAuthenticator):
-
-    def __init__(self, config=None):
-        super(SimpleHeaderAuth, self).__init__(config)
-        self.name = 'REMOTE_USER'
-        self.value = None
-        if 'header' in self.config:
-            self.name = self.config['header']
-        if 'value' in self.config:
-            self.value = self.config['value']
+    header = PluginOption(str, 'REMOTE_USER', "header name")
+    value = PluginOption('str_set', None,
+                         "Comma-separated list of required values")
 
     def handle(self, request):
-        if self.name not in request['headers']:
-            return False
-        value = request['headers'][self.name]
-        if self.value is None:
-            # Any value is accepted
-            pass
-        elif isinstance(self.value, str):
-            if value != self.value:
-                return False
-        elif isinstance(self.value, list):
+        if self.header not in request['headers']:
+            self.logger.debug('SHA: No "headers" in request')
+            return None
+        value = request['headers'][self.header]
+        if self.value is not None:
+            # pylint: disable=unsupported-membership-test
             if value not in self.value:
+                self.audit_svc_access(log.AUDIT_SVC_AUTH_FAIL,
+                                      request['client_id'], value)
                 return False
-        else:
-            return False
 
+        self.audit_svc_access(log.AUDIT_SVC_AUTH_PASS,
+                              request['client_id'], value)
         request['remote_user'] = value
         return True
+
+
+class SimpleAuthKeys(HTTPAuthenticator):
+    id_header = PluginOption(str, 'CUSTODIA_AUTH_ID', "auth id header name")
+    key_header = PluginOption(str, 'CUSTODIA_AUTH_KEY', "auth key header name")
+    store = PluginOption('store', None, None)
+    store_namespace = PluginOption(str, 'custodiaSAK', "")
+
+    def _db_key(self, name):
+        return os.path.join(self.store_namespace, name)
+
+    def handle(self, request):
+        name = request['headers'].get(self.id_header, None)
+        key = request['headers'].get(self.key_header, None)
+        if name is None and key is None:
+            self.logger.debug('Ignoring request no relevant headers provided')
+            return None
+
+        validated = False
+        try:
+            val = self.store.get(self._db_key(name))
+            if val is None:
+                raise ValueError("No such ID")
+            if constant_time.bytes_eq(val.encode('utf-8'),
+                                      key.encode('utf-8')):
+                validated = True
+        except Exception:  # pylint: disable=broad-except
+            self.audit_svc_access(log.AUDIT_SVC_AUTH_FAIL,
+                                  request['client_id'], name)
+            return False
+
+        if validated:
+            self.audit_svc_access(log.AUDIT_SVC_AUTH_PASS,
+                                  request['client_id'], name)
+            request['remote_user'] = name
+            return True
+
+        self.audit_svc_access(log.AUDIT_SVC_AUTH_FAIL,
+                              request['client_id'], name)
+        return False
+
+
+class SimpleClientCertAuth(HTTPAuthenticator):
+    header = PluginOption(str, 'CUSTODIA_CERT_AUTH', "header name")
+
+    def handle(self, request):
+        cert_auth = request['headers'].get(self.header, "false").lower()
+        client_cert = request['client_cert']  # {} or None
+        if not client_cert or cert_auth not in {'1', 'yes', 'true', 'on'}:
+            self.logger.debug('Ignoring request no relevant header or cert'
+                              ' provided')
+            return None
+
+        subject = client_cert.get('subject', {})
+        dn = []
+        name = None
+        # TODO: check SAN first
+        for rdn in subject:
+            for key, value in rdn:
+                dn.append('{}="{}"'.format(key, value.replace('"', r'\"')))
+                if key == 'commonName':
+                    name = value
+                    break
+
+        dn = ', '.join(dn)
+        self.logger.debug('Client cert subject: {}, serial: {}'.format(
+            dn, client_cert.get('serialNumber')))
+
+        if name:
+            self.audit_svc_access(log.AUDIT_SVC_AUTH_PASS,
+                                  request['client_id'], name)
+            request['remote_user'] = name
+            return True
+
+        self.audit_svc_access(log.AUDIT_SVC_AUTH_FAIL,
+                              request['client_id'], dn)
+        return False

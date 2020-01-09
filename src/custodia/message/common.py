@@ -1,6 +1,8 @@
 # Copyright (C) 2015  Custodia Project Contributors - see LICENSE file
 
-from custodia import log
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidMessage(Exception):
@@ -10,7 +12,7 @@ class InvalidMessage(Exception):
     or validated.
     """
     def __init__(self, message=None):
-        log.debug(message)
+        logger.debug(message)
         super(InvalidMessage, self).__init__(message)
 
 
@@ -21,7 +23,7 @@ class UnknownMessageType(Exception):
     type.
     """
     def __init__(self, message=None):
-        log.debug(message)
+        logger.debug(message)
         super(UnknownMessageType, self).__init__(message)
 
 
@@ -32,7 +34,7 @@ class UnallowedMessage(Exception):
     is not allowed.
     """
     def __init__(self, message=None):
-        log.debug(message)
+        logger.debug(message)
         super(UnallowedMessage, self).__init__(message)
 
 
@@ -40,7 +42,9 @@ class MessageHandler(object):
 
     def __init__(self, request):
         self.req = request
+        self.name = None
         self.payload = None
+        self.msg_type = None
 
     def parse(self, msg, name):
         """Parses the message.
@@ -57,7 +61,7 @@ class MessageHandler(object):
         """Generates a reply.
 
         :param req: the original request
-        :param output: a json string with the stored output payload
+        :param output: a Python object that can be converted to JSON
         """
 
         raise NotImplementedError

@@ -6,7 +6,7 @@ Authentication and authorization are fully pluggable and are
 therefore, not standardized.
 
 Access paths are also not standardized, although the common practice
-is to mount th secrets api under the /secrets URI
+is to mount the secrets api under the /secrets URI
 
 The Custodia API uses JSON to format requests and replies.
 
@@ -14,7 +14,6 @@ Key/Request formats
 ===================
 
 A key is a dictionary that contains the 'type' and 'value' of a key.
-Currently only the Simple type is recognized
 
 
 Simple
@@ -29,6 +28,14 @@ required to base64 encode binary values or non-string values.
 The value must be representable as a valid JSON string. Keys are
 validated before being stored, unknown key types or invalid JSON values
 are refused and an error is returned.
+
+
+NOTE: As an alternative it is possible to send a simple "raw" value by setting
+the Content-type of the request to "application/octet-stream". In this case the
+value will be base64 encoded when received and can be accessed as a base64
+encoded value in the JSON string when the default GET format is used.
+Sending the "Accept: application/octet-stream" header will instead cause the
+GET operation to return just the raw value that was originally sent.
 
 
 Key Exchange Message
@@ -58,15 +65,15 @@ Format:
 
  Attributes:
  - public-key-identifier: This is the kid of a key that must be known to the
- Custodia service. If opportunistic encription is desired, and the requesting
+ Custodia service. If opportunistic encryption is desired, and the requesting
  client is authenticated in other ways a "jku"  header could be used instead,
- and a key fetched on the fly. This is not recommended for the gneral case and
+ and a key fetched on the fly. This is not recommended for the general case and
  is not currently supported by the implementation.
- - name-of-secret: this repeates the name of the secret embedded in the GET,
+ - name-of-secret: this repeats the name of the secret embedded in the GET,
  This is used to prevent substitution attacks where a client is intercepted
  and its signed request is reused to request a different key.
  - unix-timestamp: used to limit replay attacks, indicated expiration time,
- and should be no further than 5 minutes in the future, with leway up to 10
+ and should be no further than 5 minutes in the future, with leeway up to 10
  minutes to account for clock skews
  Additional claims may be present, for example a 'value'.
 
@@ -101,7 +108,7 @@ There are essentially 2 objects recognized by the API:
 
 Key containers can be nested and named arbitrarily, however depending on
 authorization schemes used the basic container is often named after a group or
-a user in order to make authorization chcks simpler.
+a user in order to make authorization checks simpler.
 
 
 Getting keys
@@ -124,7 +131,7 @@ Returns:
 Storing keys
 ------------
 
-A PUT operation withthe name of the key:
+A PUT operation with the name of the key:
 PUT /secrets/name/of/key
 
 The Content-Type MUST be 'application/json'
@@ -153,6 +160,7 @@ Returns:
 - 401 if authentication is necessary
 - 403 if access to the key is forbidden
 - 404 if no key was found
+- 406 not acceptable, type unknown/not permitted
 
 
 Listing containers
@@ -160,11 +168,9 @@ Listing containers
 
 A GET operation on a path that ends in a '/' translates into
 a listing for a container.
-A 'filter' query argument may be provided to filter on key/container
-names within the container being listed.
-GET /secrets/container/?filter=red
+GET /secrets/container/
 
-Implementations may assume a default container if none is excplicitly
+Implementations may assume a default container if none is explicitly
 provided: GET /secrets/ may return only keys under /<user-default>/*
 
 Returns:
@@ -173,6 +179,7 @@ Returns:
 - 401 if authentication is necessary
 - 403 if access to the key is forbidden
 - 404 if no key was found
+- 406 not acceptable, type unknown/not permitted
 
 
 Creating containers
@@ -190,6 +197,7 @@ Returns:
 - 401 if authentication is necessary
 - 403 if access to the key is forbidden
 - 404 one of the elements of the path is not a valid container
+- 406 not acceptable, type unknown/not permitted
 - 409 if the container already exsts
 
 
@@ -204,4 +212,5 @@ Returns:
 - 401 if authentication is necessary
 - 403 if access to the container is forbidden
 - 404 if no container was found
+- 406 not acceptable, type unknown/not permitted
 - 409 if the container is not empty
