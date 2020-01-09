@@ -1,0 +1,115 @@
+#!/usr/bin/python
+#
+# Copyright (C) 2015  Custodia Project Contributors - see LICENSE file
+
+try:
+    from ConfigParser import RawConfigParser
+except ImportError:
+    from configparser import RawConfigParser
+from custodia.httpd.server import LocalHTTPServer
+from custodia import log
+import importlib
+import os
+import six
+import sys
+
+
+def source_config():
+    cfgfile = None
+    if (len(sys.argv) > 1):
+        cfgfile = sys.argv[-1]
+    elif os.path.isfile('custodia.conf'):
+        cfgfile = 'custodia.conf'
+    elif os.path.isfile('/etc/custodia/custodia.conf'):
+        cfgfile = '/etc/custodia/custodia.conf'
+    else:
+        raise IOError("Configuration file not found")
+    return cfgfile
+
+def attach_store(typename, plugins, stores):
+    for name, c in six.iteritems(plugins):
+        if getattr(c, 'store_name', None) is None:
+            continue
+        try:
+            c.store = stores[c.store_name]
+        except KeyError:
+            raise ValueError('[%s%s] references unexisting store '
+                             '"%s"' % (typename, name, c.store_name))
+
+CONFIG_SPECIALS = ['authenticators', 'authorizers', 'consumers', 'stores']
+
+def parse_config(cfgfile):
+    parser = RawConfigParser()
+    parser.optionxform = str
+    files = parser.read(cfgfile)
+    if len(files) == 0:
+        raise IOError("Failed to read config file")
+
+    config = dict()
+    for s in CONFIG_SPECIALS:
+        config[s] = dict()
+    for s in parser.sections():
+        if s == 'global':
+            for opt, val in parser.items(s):
+                if opt in CONFIG_SPECIALS:
+                    raise ValueError('"%s" is an invalid '
+                                     '[global] option' % opt)
+                config[opt] = val
+            continue
+
+        if s.startswith('/'):
+            menu = 'consumers'
+            name = s
+        else:
+            if s.startswith('auth:'):
+                menu = 'authenticators'
+                name = s[5:]
+            elif s.startswith('authz:'):
+                menu = 'authorizers'
+                name = s[6:]
+            elif s.startswith('store:'):
+                menu = 'stores'
+                name = s[6:]
+            else:
+                raise ValueError('Invalid section name [%s].\n' % s)
+
+        if not parser.has_option(s, 'handler'):
+            raise ValueError('Invalid section, missing "handler"')
+
+        handler = None
+        hconf = None
+        for opt, val in parser.items(s):
+            if opt == 'handler':
+                try:
+                    module, classname = val.rsplit('.', 1)
+                    m = importlib.import_module(module)
+                    handler = getattr(m, classname)
+                except Exception as e:  # pylint: disable=broad-except
+                    raise ValueError('Invalid format for "handler" option '
+                                     '[%r]' % e)
+
+            else:
+                if hconf is None:
+                    hconf = dict()
+                hconf[opt] = val
+        config[menu][name] = handler(hconf)
+
+    # Attach stores to other plugins
+    attach_store('auth:', config['authenticators'], config['stores'])
+    attach_store('authz:', config['authorizers'], config['stores'])
+    attach_store('', config['consumers'], config['stores'])
+
+    return config
+
+if __name__ == '__main__':
+    cfgfile = source_config()
+    config = parse_config(cfgfile)
+    if config.get('debug') == 'True':
+        log.DEBUG = True
+
+    if 'server_socket' in config:
+        address = config['server_socket']
+    else:
+        address = os.path.join(os.getcwd(), 'server_socket')
+    httpd = LocalHTTPServer(address, config)
+    httpd.serve()
